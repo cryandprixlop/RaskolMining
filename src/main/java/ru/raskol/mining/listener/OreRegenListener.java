@@ -1,7 +1,5 @@
 package ru.raskol.mining.listener;
 
-import org.bukkit.Location;
-import org.bukkit.Material;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -22,13 +20,20 @@ import java.util.UUID;
 
 /**
  * При добыче руды:
- * 1) ставим блок в очередь регенерации (через interval-hours вернётся на место);
- * 2) рулетка лута кирки: золотой самородок -> фрагмент -> множитель дропа.
- * Одна рулетка на игрока в окне 2 сек (защита от жил из 8 блоков).
+ * 1) блок встаёт в очередь регенерации (interval-hours);
+ * 2) рулетка лута кирки: самородок -> фрагмент -> множитель дропа.
+ * Списки руд и шансы работают даже без серверного конфига (встроенные дефолты).
  */
 public final class OreRegenListener implements Listener {
 
     private static final long ROLL_WINDOW_MS = 2000;
+
+    private static final List<String> DEFAULT_ORES = List.of(
+            "COAL_ORE", "DEEPSLATE_COAL_ORE", "IRON_ORE", "DEEPSLATE_IRON_ORE",
+            "COPPER_ORE", "DEEPSLATE_COPPER_ORE", "GOLD_ORE", "DEEPSLATE_GOLD_ORE",
+            "REDSTONE_ORE", "DEEPSLATE_REDSTONE_ORE", "LAPIS_ORE", "DEEPSLATE_LAPIS_ORE",
+            "DIAMOND_ORE", "DEEPSLATE_DIAMOND_ORE", "EMERALD_ORE", "DEEPSLATE_EMERALD_ORE",
+            "NETHER_GOLD_ORE", "NETHER_QUARTZ_ORE");
 
     private static final Map<String, Double> DEFAULTS = Map.ofEntries(
             Map.entry("vanilla.golden-chance", 0.001),
@@ -55,33 +60,40 @@ public final class OreRegenListener implements Listener {
         this.plugin = plugin;
         this.store = store;
         this.pickService = pickService;
-        if (plugin.getConfig().getConfigurationSection("loot") == null) {
-            plugin.getLogger().warning("[Mining] В серверном config.yml нет секции 'loot'! "
-                    + "Удали plugins/RaskolMining/config.yml и перезапусти. Используются дефолты.");
+        if (plugin.getConfig().getStringList("ores").isEmpty()) {
+            plugin.getLogger().warning("[Mining] В серверном config.yml нет списка 'ores'! "
+                    + "Использую встроенные дефолты. Удали plugins/RaskolMining/config.yml и перезапусти.");
         }
+    }
+
+    /** Список руд: конфиг, а если пуст/побит — встроенный дефолт. */
+    private List<String> oreList() {
+        List<String> list = plugin.getConfig().getStringList("ores");
+        return list.isEmpty() ? DEFAULT_ORES : list;
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onOreBreak(BlockBreakEvent event) {
         Block block = event.getBlock();
-        Material mat = block.getType();
-        List<String> ores = plugin.getConfig().getStringList("ores");
-        if (!ores.contains(mat.name())) return;
+        String mat = block.getType().name();
+        if (!oreList().contains(mat)) return;
 
         Player player = event.getPlayer();
 
         // 1) Очередь регенерации
+        double hours = plugin.getConfig().getDouble("regen.interval-hours", 3.0);
         PendingOre p = new PendingOre();
         p.world = block.getWorld().getName();
         p.x = block.getX();
         p.y = block.getY();
         p.z = block.getZ();
-        p.material = mat.name();
-        p.restoreAtEpochSeconds = System.currentTimeMillis() / 1000L
-                + (long) (plugin.getConfig().getDouble("regen.interval-hours", 3.0) * 3600.0);
+        p.material = mat;
+        p.restoreAtEpochSeconds = System.currentTimeMillis() / 1000L + (long) (hours * 3600.0);
         store.addPending(p);
+        plugin.getLogger().info("[Mining] queued regen: " + mat + " at "
+                + p.x + "," + p.y + "," + p.z + " in " + (int) (hours * 60) + " min");
 
-        // 2) Рулетка лута (только киркой, одна на игрока в окне 2 сек)
+        // 2) Рулетка лута (одна на игрока в окне 2 сек)
         ItemStack tool = player.getInventory().getItemInMainHand();
         PickTier tier = pickService.tierOf(tool);
         if (tier == null) return;
@@ -96,10 +108,9 @@ public final class OreRegenListener implements Listener {
 
     private void rollLoot(Player player, PickTier tier, Block block, ItemStack tool) {
         String section = sectionOf(tier);
-        double roll = random100();
+        double roll = Math.random() * 100.0;
         double acc = 0.0;
 
-        // 1) Золотой самородок
         double golden = chance(section, "golden-chance");
         acc += golden;
         if (roll < acc) {
@@ -110,7 +121,6 @@ public final class OreRegenListener implements Listener {
             return;
         }
 
-        // 2) Фрагмент следующей кирки
         double fragChance = chance(section, "next-fragment-chance");
         acc += fragChance;
         if (roll < acc) {
@@ -124,18 +134,16 @@ public final class OreRegenListener implements Listener {
             return;
         }
 
-        // 3) Множитель дропа руды (отдельный ролл)
         double quad = chance(section, "quad-chance");
         double triple = chance(section, "triple-chance");
         double dbl = chance(section, "double-chance");
-        double mRoll = random100();
+        double mRoll = Math.random() * 100.0;
         int multiplier = 1;
         if (mRoll < quad) multiplier = 4;
         else if (mRoll < quad + triple) multiplier = 3;
         else if (mRoll < quad + triple + dbl) multiplier = 2;
 
         if (multiplier > 1) {
-            // Доп. дроп = лут блока с учётом инструмента × (multiplier-1)
             for (ItemStack drop : block.getDrops(tool)) {
                 ItemStack extra = drop.clone();
                 extra.setAmount(drop.getAmount() * (multiplier - 1));
@@ -145,10 +153,6 @@ public final class OreRegenListener implements Listener {
             plugin.getLogger().info("[Mining] " + player.getName()
                     + ": множитель ×" + multiplier + " (" + tier.name() + ")");
         }
-    }
-
-    private double random100() {
-        return Math.random() * 100.0;
     }
 
     private double chance(String section, String key) {
