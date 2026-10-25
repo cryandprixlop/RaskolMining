@@ -1,0 +1,48 @@
+# ===== RaskolMining =====
+regen:
+  interval-hours: 3        # через сколько часов руда возвращается на место
+
+pick:
+  craft-success-chance: 25.0
+
+# Руды, участвующие в регенерации
+ores:
+  - COAL_ORE
+  - DEEPSLATE_COAL_ORE
+  - IRON_ORE
+  - DEEPSLATE_IRON_ORE
+  - COPPER_ORE
+  - DEEPSLATE_COPPER_ORE
+  - GOLD_ORE
+  - DEEPSLATE_GOLD_ORE
+  - REDSTONE_ORE
+  - DEEPSLATE_REDSTONE_ORE
+  - LAPIS_ORE
+  - DEEPSLATE_LAPIS_ORE
+  - DIAMOND_ORE
+  - DEEPSLATE_DIAMOND_ORE
+  - EMERALD_ORE
+  - DEEPSLATE_EMERALD_ORE
+  - NETHER_GOLD_ORE
+  - NETHER_QUARTZ_ORE
+  # - ANCIENT_DEBRIS      # раскомментируй, если хочешь реген древних обломков
+
+# Шансы лута (одна рулетка на игрока в окне 2 сек)
+loot:
+  vanilla:
+    golden-chance: 0.001
+    next-fragment-chance: 5.0
+    double-chance: 2.0
+  veteran:
+    golden-chance: 0.002
+    next-fragment-chance: 4.0
+    double-chance: 4.0
+  dwarf:
+    golden-chance: 0.01
+    next-fragment-chance: 4.0
+    double-chance: 20.0
+  goblin:
+    golden-chance: 0.5
+    double-chance: 35.0
+    triple-chance: 15.0
+    quad-chance: 10.0
