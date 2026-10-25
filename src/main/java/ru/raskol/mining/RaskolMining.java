@@ -7,52 +7,66 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.ShapedRecipe;
 import org.bukkit.plugin.java.JavaPlugin;
 import ru.raskol.mining.command.MineCommand;
+import ru.raskol.mining.hook.TownyHook;
+import ru.raskol.mining.hook.VaultHook;
+import ru.raskol.mining.listener.MiningLicenseListener;
 import ru.raskol.mining.listener.OreRegenListener;
 import ru.raskol.mining.listener.PickCraftListener;
 import ru.raskol.mining.listener.PickDurabilityListener;
 import ru.raskol.mining.model.PickTier;
+import ru.raskol.mining.service.LicenseService;
 import ru.raskol.mining.service.PickService;
+import ru.raskol.mining.store.LicenseStore;
 import ru.raskol.mining.store.MiningStore;
 import ru.raskol.mining.task.OreRegenTask;
 
 public final class RaskolMining extends JavaPlugin {
 
     private MiningStore store;
+    private LicenseStore licenseStore;
+    private TownyHook townyHook;
+    private VaultHook vaultHook;
     private PickService pickService;
+    private LicenseService licenseService;
 
     @Override
     public void onEnable() {
         saveDefaultConfig();
         store = new MiningStore(this);
         store.load();
+        licenseStore = new LicenseStore(this);
+        licenseStore.load();
+        townyHook = new TownyHook(this);
+        vaultHook = new VaultHook(this);
         pickService = new PickService(this);
+        licenseService = new LicenseService(this, licenseStore, vaultHook, townyHook);
 
         registerPickRecipes();
 
         PluginCommand cmd = getCommand("mine");
         if (cmd != null) {
-            MineCommand executor = new MineCommand(this, store, pickService);
+            MineCommand executor = new MineCommand(this, store, pickService,
+                    licenseService, licenseStore, townyHook);
             cmd.setExecutor(executor);
             cmd.setTabCompleter(executor);
         }
 
-        getServer().getPluginManager().registerEvents(
-                new OreRegenListener(this, store, pickService), this);
-        getServer().getPluginManager().registerEvents(
-                new PickCraftListener(this, pickService), this);
-        getServer().getPluginManager().registerEvents(
-                new PickDurabilityListener(this, pickService), this);
+        getServer().getPluginManager().registerEvents(new MiningLicenseListener(this, licenseService), this);
+        getServer().getPluginManager().registerEvents(new OreRegenListener(this, store, pickService), this);
+        getServer().getPluginManager().registerEvents(new PickCraftListener(this, pickService), this);
+        getServer().getPluginManager().registerEvents(new PickDurabilityListener(this, pickService), this);
 
-        // Проверка очереди регенерации раз в минуту
         getServer().getScheduler().runTaskTimer(this,
                 new OreRegenTask(this, store), 200L, 20L * 60);
 
         getLogger().info("RaskolMining v" + getDescription().getVersion()
                 + " включён. В очереди регенерации: " + store.pending().size()
-                + " блоков. Интервал: " + getConfig().getDouble("regen.interval-hours", 3.0) + " ч.");
+                + " блоков. Лицензий активно: " + licenseStore.activeCount()
+                + ". Интервал: " + getConfig().getDouble("regen.interval-hours", 3.0) + " ч."
+                + ". Towny: " + (townyHook.isAvailable() ? "да" : "нет")
+                + ". Vault: " + (vaultHook.isAvailable() ? "да" : "нет") + ".");
     }
 
-    /** 3 фрагмента в ряд -> кирка тира (исход рулетки решает PickCraftListener). */
     private void registerPickRecipes() {
         int count = 0;
         for (PickTier tier : new PickTier[]{PickTier.VETERAN, PickTier.DWARF, PickTier.GOBLIN}) {
@@ -70,9 +84,11 @@ public final class RaskolMining extends JavaPlugin {
     @Override
     public void onDisable() {
         if (store != null) store.save();
+        if (licenseStore != null) licenseStore.save();
         getLogger().info("RaskolMining выключен.");
     }
 
     public MiningStore getStore() { return store; }
     public PickService getPickService() { return pickService; }
+    public LicenseService getLicenseService() { return licenseService; }
 }
