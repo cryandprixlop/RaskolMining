@@ -1,0 +1,14 @@
+name: RaskolMining
+version: ${project.version}
+main: ru.raskol.mining.RaskolMining
+api-version: '1.21'
+author: Baltimor
+description: Work of the miner - pick tiers and ore regeneration.
+commands:
+  mine:
+    description: Commands of the miner
+    usage: /mine help
+permissions:
+  mining.admin:
+    description: Admin commands of the miner
+    default: op
