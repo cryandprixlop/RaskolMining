@@ -6,8 +6,12 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Player;
 import ru.raskol.mining.RaskolMining;
+import ru.raskol.mining.hook.TownyHook;
+import ru.raskol.mining.model.License;
 import ru.raskol.mining.model.PickTier;
+import ru.raskol.mining.service.LicenseService;
 import ru.raskol.mining.service.PickService;
+import ru.raskol.mining.store.LicenseStore;
 import ru.raskol.mining.store.MiningStore;
 
 import java.util.ArrayList;
@@ -20,17 +24,25 @@ public final class MineCommand implements CommandExecutor, TabCompleter {
     private final RaskolMining plugin;
     private final MiningStore store;
     private final PickService pickService;
+    private final LicenseService licenseService;
+    private final LicenseStore licenseStore;
+    private final TownyHook towny;
 
-    public MineCommand(RaskolMining plugin, MiningStore store, PickService pickService) {
+    public MineCommand(RaskolMining plugin, MiningStore store, PickService pickService,
+                       LicenseService licenseService, LicenseStore licenseStore, TownyHook towny) {
         this.plugin = plugin;
         this.store = store;
         this.pickService = pickService;
+        this.licenseService = licenseService;
+        this.licenseStore = licenseStore;
+        this.towny = towny;
     }
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (args.length == 0) { sendHelp(sender); return true; }
         switch (args[0].toLowerCase()) {
+            case "license"  -> handleLicense(sender, args);
             case "pick"     -> handlePick(sender, args);
             case "fragment" -> handleFragment(sender, args);
             case "golden"   -> handleGolden(sender, args);
@@ -43,14 +55,15 @@ public final class MineCommand implements CommandExecutor, TabCompleter {
 
     private void sendHelp(CommandSender sender) {
         sender.sendMessage("§6=== RaskolMining ===");
+        sender.sendMessage("§e/mine license buy §7— купить лицензию шахтёра");
+        sender.sendMessage("§e/mine license status §7— статус лицензии");
+        sender.sendMessage("§e/mine license setprice <цена> §7— (король) цена в своём городе");
         sender.sendMessage("§e/mine pick give <tier> <игрок> [кол-во] §7— выдать кирку");
         sender.sendMessage("§e/mine fragment give <tier> <игрок> [кол-во] §7— выдать фрагмент");
         sender.sendMessage("§e/mine golden give <игрок> [кол-во] §7— выдать золотой самородок");
         sender.sendMessage("§e/mine list §7— очередь регенерации руды");
         sender.sendMessage("§e/mine reload §7— перезагрузить конфиг");
         sender.sendMessage("§7Тиры: VANILLA, VETERAN, DWARF, GOBLIN");
-        sender.sendMessage("§7Руда возвращается через "
-                + plugin.getConfig().getDouble("regen.interval-hours", 3.0) + " ч.");
     }
 
     private boolean admin(CommandSender sender) {
@@ -59,6 +72,49 @@ public final class MineCommand implements CommandExecutor, TabCompleter {
         return false;
     }
 
+    /* ================= license ================= */
+
+    private void handleLicense(CommandSender sender, String[] args) {
+        if (args.length < 2) { sender.sendMessage("§c/mine license <buy|status|setprice>"); return; }
+        switch (args[1].toLowerCase()) {
+            case "buy" -> {
+                if (!(sender instanceof Player p)) { sender.sendMessage("§cТолько игроки."); return; }
+                p.sendMessage(licenseService.buy(p).message);
+            }
+            case "status" -> {
+                if (!(sender instanceof Player p)) { sender.sendMessage("§cТолько игроки."); return; }
+                License lic = licenseStore.get(p.getUniqueId().toString());
+                if (lic == null || !lic.isValid()) {
+                    p.sendMessage("§7Лицензия неактивна. Купи: §e/mine license buy");
+                } else {
+                    p.sendMessage("§aЛицензия шахтёра активна. Осталось: §e" + lic.remainingFormatted());
+                }
+            }
+            case "setprice" -> {
+                if (!(sender instanceof Player p)) { sender.sendMessage("§cТолько игроки."); return; }
+                if (args.length < 3) { p.sendMessage("§c/mine license setprice <цена>"); return; }
+                String town = towny.residentTownName(p);
+                if (town == null && !p.hasPermission("mining.admin")) {
+                    p.sendMessage("§cТы должен быть жителем города.");
+                    return;
+                }
+                if (!p.hasPermission("mining.admin") && !towny.isKing(p)) {
+                    p.sendMessage("§cТолько король может менять цену лицензии.");
+                    return;
+                }
+                double price;
+                try { price = Double.parseDouble(args[2]); }
+                catch (NumberFormatException e) { p.sendMessage("§cЦена должна быть числом."); return; }
+                if (price < 0) { p.sendMessage("§cЦена не может быть отрицательной."); return; }
+                if (town != null) licenseStore.setTownPrice(town, price);
+                p.sendMessage("§aЦена лицензии шахтёра для " + town + " теперь §b" + price + "§a.");
+            }
+            default -> sender.sendMessage("§cНеизвестная подкоманда.");
+        }
+    }
+
+    /* ================= pick / fragment / golden ================= */
+
     private void handlePick(CommandSender sender, String[] args) {
         if (!admin(sender)) return;
         if (args.length < 4 || !args[1].equalsIgnoreCase("give")) {
@@ -66,20 +122,13 @@ public final class MineCommand implements CommandExecutor, TabCompleter {
             return;
         }
         PickTier tier;
-        try {
-            tier = PickTier.valueOf(args[2].toUpperCase());
-        } catch (IllegalArgumentException e) {
-            sender.sendMessage("§cНеизвестный тир. Доступны: VANILLA, VETERAN, DWARF, GOBLIN.");
-            return;
-        }
+        try { tier = PickTier.valueOf(args[2].toUpperCase()); }
+        catch (IllegalArgumentException e) { sender.sendMessage("§cНеизвестный тир."); return; }
         Player target = plugin.getServer().getPlayer(args[3]);
         if (target == null) { sender.sendMessage("§cИгрок не найден."); return; }
         int amount = parseInt(args.length >= 5 ? args[4] : "1", 1);
-        for (int i = 0; i < amount; i++) {
-            target.getInventory().addItem(pickService.createPick(tier));
-        }
-        sender.sendMessage("§aВыдано " + amount + " × " + tier.displayName
-                + " §aигроку " + target.getName());
+        for (int i = 0; i < amount; i++) target.getInventory().addItem(pickService.createPick(tier));
+        sender.sendMessage("§aВыдано " + amount + " × " + tier.displayName + " §aигроку " + target.getName());
     }
 
     private void handleFragment(CommandSender sender, String[] args) {
@@ -89,22 +138,14 @@ public final class MineCommand implements CommandExecutor, TabCompleter {
             return;
         }
         PickTier tier;
-        try {
-            tier = PickTier.valueOf(args[2].toUpperCase());
-        } catch (IllegalArgumentException e) {
-            sender.sendMessage("§cНеизвестный тир. Доступны: VETERAN, DWARF, GOBLIN.");
-            return;
-        }
-        if (tier == PickTier.VANILLA) {
-            sender.sendMessage("§cУ обычной кирки нет фрагмента.");
-            return;
-        }
+        try { tier = PickTier.valueOf(args[2].toUpperCase()); }
+        catch (IllegalArgumentException e) { sender.sendMessage("§cНеизвестный тир."); return; }
+        if (tier == PickTier.VANILLA) { sender.sendMessage("§cУ обычной кирки нет фрагмента."); return; }
         Player target = plugin.getServer().getPlayer(args[3]);
         if (target == null) { sender.sendMessage("§cИгрок не найден."); return; }
         int amount = parseInt(args.length >= 5 ? args[4] : "1", 1);
         target.getInventory().addItem(pickService.createFragment(tier, amount));
-        sender.sendMessage("§aВыдано " + amount + " × " + tier.fragmentDisplayName
-                + " §aигроку " + target.getName());
+        sender.sendMessage("§aВыдано " + amount + " × " + tier.fragmentDisplayName + " §aигроку " + target.getName());
     }
 
     private void handleGolden(CommandSender sender, String[] args) {
@@ -148,10 +189,11 @@ public final class MineCommand implements CommandExecutor, TabCompleter {
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (args.length == 1) {
-            return filter(Arrays.asList("pick", "fragment", "golden", "list", "reload"), args[0]);
+            return filter(Arrays.asList("license", "pick", "fragment", "golden", "list", "reload"), args[0]);
         }
         if (args.length == 2) {
             return switch (args[0].toLowerCase()) {
+                case "license" -> filter(Arrays.asList("buy", "status", "setprice"), args[1]);
                 case "pick", "fragment", "golden" -> filter(List.of("give"), args[1]);
                 default -> Collections.emptyList();
             };
