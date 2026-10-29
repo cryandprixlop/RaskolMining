@@ -1,4 +1,5 @@
 # ===== RaskolMining =====
+# Все шансы указаны в процентах (0-100).
 regen:
   interval-hours: 3
 
@@ -8,8 +9,19 @@ pick:
 license:
   default-price: 500.0
   duration-days: 30
+  gold:
+    default-price: 6500.0
+    duration-days: 7
 
 town-account-prefix: "town-"
+
+# Руда приоритетнее защиты Towny (при действующей лицензии)
+ores-override-towny: true
+
+# Защита диких земель: ломать можно только руду (+ allowed-extra)
+wilderness-protect:
+  enabled: true
+  allowed-extra: []
 
 ores:
   - COAL_ORE
@@ -31,6 +43,12 @@ ores:
   - NETHER_GOLD_ORE
   - NETHER_QUARTZ_ORE
 
+# Золотые руды (подмножество ores): нужна лицензия GOLD
+gold-ores:
+  - GOLD_ORE
+  - DEEPSLATE_GOLD_ORE
+  - NETHER_GOLD_ORE
+
 loot:
   vanilla:
     golden-chance: 0.001
@@ -46,6 +64,6 @@ loot:
     double-chance: 20.0
   goblin:
     golden-chance: 0.5
-    double-chance: 35.0
-    triple-chance: 15.0
-    quad-chance: 10.0
+    double-chance: 30.0
+    triple-chance: 12.0
+    quad-chance: 8.0
