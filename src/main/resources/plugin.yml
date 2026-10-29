@@ -2,13 +2,14 @@ name: RaskolMining
 version: ${project.version}
 main: ru.raskol.mining.RaskolMining
 api-version: '1.21'
-author: Baltimor
-description: Work of the miner - pick tiers and ore regeneration.
+authors: [Baltimor]
+description: Mining with licenses, pick tiers, ore regen and wilderness protection.
+softdepend: [Vault, Towny]
 commands:
   mine:
-    description: Commands of the miner
+    description: Mining commands
     usage: /mine help
 permissions:
   mining.admin:
-    description: Admin commands of the miner
+    description: Admin commands, bypass of licenses and wilderness protection
     default: op
