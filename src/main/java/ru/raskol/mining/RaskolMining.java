@@ -101,4 +101,6 @@ public final class RaskolMining extends JavaPlugin {
     public PickService getPickService() { return pickService; }
     public LicenseService getLicenseService() { return licenseService; }
     public OreService getOreService() { return oreService; }
+    public VaultHook getVaultHook() { return vaultHook; }
+    public TownyHook getTownyHook() { return townyHook; }
 }
