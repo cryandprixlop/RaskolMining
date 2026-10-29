@@ -8,7 +8,9 @@ import org.bukkit.entity.Player;
 import ru.raskol.mining.RaskolMining;
 import ru.raskol.mining.hook.TownyHook;
 import ru.raskol.mining.model.License;
+import ru.raskol.mining.model.LicenseType;
 import ru.raskol.mining.model.PickTier;
+import ru.raskol.mining.model.PendingOre;
 import ru.raskol.mining.service.LicenseService;
 import ru.raskol.mining.service.PickService;
 import ru.raskol.mining.store.LicenseStore;
@@ -55,14 +57,14 @@ public final class MineCommand implements CommandExecutor, TabCompleter {
 
     private void sendHelp(CommandSender sender) {
         sender.sendMessage("§6=== RaskolMining ===");
-        sender.sendMessage("§e/mine license buy §7— купить лицензию шахтёра");
-        sender.sendMessage("§e/mine license status §7— статус лицензии");
-        sender.sendMessage("§e/mine license setprice <цена> §7— (король) цена в своём городе");
+        sender.sendMessage("§e/mine license buy [gold] §7— купить лицензию (gold = на золото, 7 дней)");
+        sender.sendMessage("§e/mine license status §7— статус обеих лицензий");
+        sender.sendMessage("§e/mine license setprice [gold] <цена> §7— (король) цена для своей нации");
         sender.sendMessage("§e/mine pick give <tier> <игрок> [кол-во] §7— выдать кирку");
         sender.sendMessage("§e/mine fragment give <tier> <игрок> [кол-во] §7— выдать фрагмент");
         sender.sendMessage("§e/mine golden give <игрок> [кол-во] §7— выдать золотой самородок");
         sender.sendMessage("§e/mine list §7— очередь регенерации руды");
-        sender.sendMessage("§e/mine reload §7— перезагрузить конфиг");
+        sender.sendMessage("§e/mine reload §7— перезагрузить конфиг и кеш руд");
         sender.sendMessage("§7Тиры: VANILLA, VETERAN, DWARF, GOBLIN");
     }
 
@@ -75,45 +77,90 @@ public final class MineCommand implements CommandExecutor, TabCompleter {
     /* ================= license ================= */
 
     private void handleLicense(CommandSender sender, String[] args) {
-        if (args.length < 2) { sender.sendMessage("§c/mine license <buy|status|setprice>"); return; }
+        if (args.length < 2) {
+            sender.sendMessage("§c/mine license <buy [gold]|status|setprice [gold] <цена>>");
+            return;
+        }
         switch (args[1].toLowerCase()) {
             case "buy" -> {
                 if (!(sender instanceof Player p)) { sender.sendMessage("§cТолько игроки."); return; }
-                p.sendMessage(licenseService.buy(p).message);
+                LicenseType type = LicenseType.MINER;
+                if (args.length >= 3) {
+                    if (args[2].equalsIgnoreCase("gold")) type = LicenseType.GOLD;
+                    else { p.sendMessage("§cФормат: /mine license buy [gold]"); return; }
+                }
+                p.sendMessage(licenseService.buy(p, type).message);
             }
             case "status" -> {
                 if (!(sender instanceof Player p)) { sender.sendMessage("§cТолько игроки."); return; }
-                License lic = licenseStore.get(p.getUniqueId().toString());
-                if (lic == null || !lic.isValid()) {
-                    p.sendMessage("§7Лицензия неактивна. Купи: §e/mine license buy");
-                } else {
-                    p.sendMessage("§aЛицензия шахтёра активна. Осталось: §e" + lic.remainingFormatted());
+                String uuid = p.getUniqueId().toString();
+                sender.sendMessage("§6=== Лицензии шахтёра ===");
+                for (LicenseType t : LicenseType.values()) {
+                    License lic = licenseStore.get(t, uuid);
+                    if (lic != null && lic.isValid()) {
+                        p.sendMessage("§aЛицензия " + t.title + ": активна, осталось §e"
+                                + lic.remainingFormatted());
+                    } else {
+                        p.sendMessage("§7Лицензия " + t.title + ": неактивна. Цена сейчас: §b"
+                                + plugin.getVaultHook().format(licenseService.priceFor(p, t))
+                                + " §7(/mine license buy" + (t == LicenseType.GOLD ? " gold" : "") + ")");
+                    }
                 }
             }
-            case "setprice" -> {
-                if (!(sender instanceof Player p)) { sender.sendMessage("§cТолько игроки."); return; }
-                if (args.length < 3) { p.sendMessage("§c/mine license setprice <цена>"); return; }
-                String town = towny.residentTownName(p);
-                if (town == null && !p.hasPermission("mining.admin")) {
-                    p.sendMessage("§cТы должен быть жителем города.");
-                    return;
-                }
-                if (!p.hasPermission("mining.admin") && !towny.isKing(p)) {
-                    p.sendMessage("§cТолько король может менять цену лицензии.");
-                    return;
-                }
-                double price;
-                try { price = Double.parseDouble(args[2]); }
-                catch (NumberFormatException e) { p.sendMessage("§cЦена должна быть числом."); return; }
-                if (price < 0) { p.sendMessage("§cЦена не может быть отрицательной."); return; }
-                if (town != null) licenseStore.setTownPrice(town, price);
-                p.sendMessage("§aЦена лицензии шахтёра для " + town + " теперь §b" + price + "§a.");
-            }
-            default -> sender.sendMessage("§cНеизвестная подкоманда.");
+            case "setprice" -> handleSetPrice(sender, args);
+            default -> sender.sendMessage("§c/mine license <buy [gold]|status|setprice [gold] <цена>>");
         }
     }
 
-    /* ================= pick / fragment / golden ================= */
+    private void handleSetPrice(CommandSender sender, String[] args) {
+        if (!(sender instanceof Player p)) { sender.sendMessage("§cТолько игроки."); return; }
+        LicenseType type = LicenseType.MINER;
+        String priceArg;
+        if (args.length == 3) {
+            priceArg = args[2];
+        } else if (args.length == 4 && args[2].equalsIgnoreCase("gold")) {
+            type = LicenseType.GOLD;
+            priceArg = args[3];
+        } else {
+            p.sendMessage("§cФормат: /mine license setprice [gold] <цена>");
+            return;
+        }
+
+        boolean isAdmin = p.hasPermission("mining.admin");
+        if (!isAdmin && !towny.isKing(p)) {
+            p.sendMessage("§cТолько король может менять цену лицензии.");
+            return;
+        }
+        String nationId = towny.residentNationId(p);
+        if (nationId == null) {
+            p.sendMessage("§cТы не состоишь в королевстве — цену задавать некому.");
+            return;
+        }
+
+        double price;
+        try {
+            price = Double.parseDouble(priceArg);
+        } catch (NumberFormatException e) {
+            p.sendMessage("§cЦена должна быть числом.");
+            return;
+        }
+        if (Double.isNaN(price) || Double.isInfinite(price)) {
+            p.sendMessage("§cЦена должна быть конечным числом.");
+            return;
+        }
+        if (price < 0) {
+            p.sendMessage("§cЦена не может быть отрицательной.");
+            return;
+        }
+
+        licenseStore.setNationPrice(type, nationId, price);
+        p.sendMessage("§aЦена лицензии " + type.title + " для твоей нации теперь §b"
+                + plugin.getVaultHook().format(price) + "§a.");
+        plugin.getLogger().info("[Mining] nation price set: type=" + type.id + " nation=" + nationId
+                + " price=" + price + " by " + p.getName());
+    }
+
+    /* ================= выдача / список / reload ================= */
 
     private void handlePick(CommandSender sender, String[] args) {
         if (!admin(sender)) return;
@@ -164,7 +211,7 @@ public final class MineCommand implements CommandExecutor, TabCompleter {
     private void handleList(CommandSender sender) {
         sender.sendMessage("§6=== Очередь регенерации: " + store.pending().size() + " блоков ===");
         int shown = 0;
-        for (ru.raskol.mining.model.PendingOre p : store.pending()) {
+        for (PendingOre p : store.pending()) {
             if (shown++ >= 10) {
                 sender.sendMessage("§7... и ещё " + (store.pending().size() - 10));
                 break;
@@ -178,7 +225,8 @@ public final class MineCommand implements CommandExecutor, TabCompleter {
     private void handleReload(CommandSender sender) {
         if (!admin(sender)) return;
         plugin.reloadConfig();
-        sender.sendMessage("§aКонфиг RaskolMining перезагружен.");
+        plugin.getOreService().reload();
+        sender.sendMessage("§aКонфиг и кеш руд RaskolMining перезагружены.");
     }
 
     private int parseInt(String s, int def) {
@@ -198,11 +246,17 @@ public final class MineCommand implements CommandExecutor, TabCompleter {
                 default -> Collections.emptyList();
             };
         }
-        if (args.length == 3 && args[0].equalsIgnoreCase("pick") && args[1].equalsIgnoreCase("give")) {
-            return filter(Arrays.asList("VANILLA", "VETERAN", "DWARF", "GOBLIN"), args[2]);
-        }
-        if (args.length == 3 && args[0].equalsIgnoreCase("fragment") && args[1].equalsIgnoreCase("give")) {
-            return filter(Arrays.asList("VETERAN", "DWARF", "GOBLIN"), args[2]);
+        if (args.length == 3) {
+            if (args[0].equalsIgnoreCase("license")
+                    && (args[1].equalsIgnoreCase("buy") || args[1].equalsIgnoreCase("setprice"))) {
+                return filter(List.of("gold"), args[2]);
+            }
+            if (args[0].equalsIgnoreCase("pick") && args[1].equalsIgnoreCase("give")) {
+                return filter(Arrays.asList("VANILLA", "VETERAN", "DWARF", "GOBLIN"), args[2]);
+            }
+            if (args[0].equalsIgnoreCase("fragment") && args[1].equalsIgnoreCase("give")) {
+                return filter(Arrays.asList("VETERAN", "DWARF", "GOBLIN"), args[2]);
+            }
         }
         return Collections.emptyList();
     }
@@ -210,9 +264,7 @@ public final class MineCommand implements CommandExecutor, TabCompleter {
     private List<String> filter(List<String> list, String prefix) {
         String lower = prefix.toLowerCase();
         List<String> out = new ArrayList<>();
-        for (String s : list) {
-            if (s.toLowerCase().startsWith(lower)) out.add(s);
-        }
+        for (String s : list) if (s.toLowerCase().startsWith(lower)) out.add(s);
         return out;
     }
 }
