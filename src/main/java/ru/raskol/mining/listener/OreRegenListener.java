@@ -10,11 +10,11 @@ import org.bukkit.inventory.ItemStack;
 import ru.raskol.mining.RaskolMining;
 import ru.raskol.mining.model.PendingOre;
 import ru.raskol.mining.model.PickTier;
+import ru.raskol.mining.service.OreService;
 import ru.raskol.mining.service.PickService;
 import ru.raskol.mining.store.MiningStore;
 
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -22,18 +22,11 @@ import java.util.UUID;
  * При добыче руды:
  * 1) блок встаёт в очередь регенерации (interval-hours);
  * 2) рулетка лута кирки: самородок -> фрагмент -> множитель дропа.
- * Списки руд и шансы работают даже без серверного конфига (встроенные дефолты).
+ * Шансы берутся из конфига loot.*, при отсутствии ключа — встроенные дефолты.
  */
 public final class OreRegenListener implements Listener {
 
     private static final long ROLL_WINDOW_MS = 2000;
-
-    private static final List<String> DEFAULT_ORES = List.of(
-            "COAL_ORE", "DEEPSLATE_COAL_ORE", "IRON_ORE", "DEEPSLATE_IRON_ORE",
-            "COPPER_ORE", "DEEPSLATE_COPPER_ORE", "GOLD_ORE", "DEEPSLATE_GOLD_ORE",
-            "REDSTONE_ORE", "DEEPSLATE_REDSTONE_ORE", "LAPIS_ORE", "DEEPSLATE_LAPIS_ORE",
-            "DIAMOND_ORE", "DEEPSLATE_DIAMOND_ORE", "EMERALD_ORE", "DEEPSLATE_EMERALD_ORE",
-            "NETHER_GOLD_ORE", "NETHER_QUARTZ_ORE");
 
     private static final Map<String, Double> DEFAULTS = Map.ofEntries(
             Map.entry("vanilla.golden-chance", 0.001),
@@ -46,37 +39,29 @@ public final class OreRegenListener implements Listener {
             Map.entry("dwarf.next-fragment-chance", 4.0),
             Map.entry("dwarf.double-chance", 20.0),
             Map.entry("goblin.golden-chance", 0.5),
-            Map.entry("goblin.double-chance", 35.0),
-            Map.entry("goblin.triple-chance", 15.0),
-            Map.entry("goblin.quad-chance", 10.0)
+            Map.entry("goblin.double-chance", 30.0),
+            Map.entry("goblin.triple-chance", 12.0),
+            Map.entry("goblin.quad-chance", 8.0)
     );
 
     private final RaskolMining plugin;
     private final MiningStore store;
     private final PickService pickService;
+    private final OreService oreService;
     private final Map<UUID, Long> lastRoll = new HashMap<>();
 
-    public OreRegenListener(RaskolMining plugin, MiningStore store, PickService pickService) {
+    public OreRegenListener(RaskolMining plugin, MiningStore store,
+                            PickService pickService, OreService oreService) {
         this.plugin = plugin;
         this.store = store;
         this.pickService = pickService;
-        if (plugin.getConfig().getStringList("ores").isEmpty()) {
-            plugin.getLogger().warning("[Mining] В серверном config.yml нет списка 'ores'! "
-                    + "Использую встроенные дефолты. Удали plugins/RaskolMining/config.yml и перезапусти.");
-        }
-    }
-
-    /** Список руд: конфиг, а если пуст/побит — встроенный дефолт. */
-    private List<String> oreList() {
-        List<String> list = plugin.getConfig().getStringList("ores");
-        return list.isEmpty() ? DEFAULT_ORES : list;
+        this.oreService = oreService;
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onOreBreak(BlockBreakEvent event) {
         Block block = event.getBlock();
-        String mat = block.getType().name();
-        if (!oreList().contains(mat)) return;
+        if (!oreService.isOre(block.getType())) return;
 
         Player player = event.getPlayer();
 
@@ -87,10 +72,10 @@ public final class OreRegenListener implements Listener {
         p.x = block.getX();
         p.y = block.getY();
         p.z = block.getZ();
-        p.material = mat;
+        p.material = block.getType().name();
         p.restoreAtEpochSeconds = System.currentTimeMillis() / 1000L + (long) (hours * 3600.0);
         store.addPending(p);
-        plugin.getLogger().info("[Mining] queued regen: " + mat + " at "
+        plugin.getLogger().info("[Mining] queued regen: " + p.material + " at "
                 + p.x + "," + p.y + "," + p.z + " in " + (int) (hours * 60) + " min");
 
         // 2) Рулетка лута (одна на игрока в окне 2 сек)
